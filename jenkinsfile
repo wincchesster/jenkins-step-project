@@ -1,0 +1,55 @@
+pipeline {
+    agent {
+        node {
+            label 'worker-1'
+        }
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout([$class: 'GitSCM', branches: [[name: '*/main']], userRemoteConfigs: [[url: 'https://github.com/wincchesster/jenkins-step-project.git']]])
+            }
+        }
+
+        stage('Build and Test') {
+            steps {
+                script {
+                    try {
+                        sh 'docker build -t node-app .'
+                        sh 'docker run -p 3000:80 --rm --name node-app-container node-app test'
+
+                        currentBuild.result = 'SUCCESS'
+                    } catch (Exception e) {
+                        
+                        currentBuild.result = 'FAILED'
+                        throw e 
+                    }
+                }
+            }
+        }
+
+        stage('Docker Hub Upload') {
+            steps {
+                script {
+                    if (currentBuild.result == 'SUCCESS') {
+                        withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
+                            sh 'echo $DOCKER_HUB_PASSWORD | docker login -u $DOCKER_HUB_USERNAME --password-stdin'
+                            sh 'docker tag node-app wincchesster/node-app:latest'
+                            sh 'docker push wincchesster/node-app:latest'
+                        }
+                    } else {
+                        echo 'Test failed!'
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // Ensure that the container is stopped and removed
+            sh 'docker container prune -f'
+        }
+    }
+}
